@@ -1,0 +1,186 @@
+#CREATING A NEW DATABASE `who_db`
+
+CREATE DATABASE IF NOT EXISTS who_db;
+USE who_db;
+DROP TABLE IF EXISTS life_expect;
+-- CREATING THE TABLE'S SCHEMA 
+
+CREATE TABLE IF NOT EXISTS life_expect(
+country VARCHAR(255),
+year INT,
+status VARCHAR(255),
+life_expectancy DECIMAL(10,1),
+adult_mortality INT ,
+infant_deaths INT, 
+alcohol DECIMAL(11,9), 
+percentage_expenditure DECIMAL(14,9) , 
+hepatitis_b INT ,
+measles INT, 
+bmi DECIMAL(5,2),
+under_five_deaths INT , 
+polio INT , 
+total_expenditure DECIMAL(5,3),
+diphtheria DECIMAL(10,5),
+hiv_aids DECIMAL(10,3) , 
+gdp DECIMAL(16,9) ,
+population DECIMAL(16,5) ,
+thinness_1_19_years DECIMAL(10,2),
+thinness_5_9_years DECIMAL(10,2), 
+income_composition_of_resources DECIMAL(10,4), 
+schooling DECIMAL(5,2)
+);
+
+-- Importing the csv file into the table
+
+SHOW VARIABLES LIKE 'local_infile';      -- if OFF turn it ON : SET GLOBAL local_infile=1;
+
+load data local infile "C:\\Users\\admin\\Desktop\\datasets\\cleaned_who_file.csv"
+into table life_expect
+fields terminated by ","
+OPTIONALLY ENCLOSED BY '"'
+LINES TERMINATED BY '\n'
+ignore 1 rows;
+
+USE who_db;
+
+SELECT *  FROM life_expect;
+
+
+
+
+
+-- Analysis on the life expectancy survey by WHO(WORLD HEALTH ORGANIZATION : YEAR 2000-2015)
+
+USE who_db;
+
+SELECT * FROM life_expect;
+
+SELECT COUNT(DISTINCT(country)) FROM life_expect;
+-- 193 countries 
+
+SELECT status,COUNT(DISTINCT(COUNTRY)) FROM life_expect
+GROUP BY status;
+-- 32 DEVELOPED V/S 161 developing 
+
+-- Q1] Which countries have shown a consistent increase in life expectancy every year (no decline at all)?
+
+WITH abc AS(SELECT *,
+LAG(life_expectancy) OVER(PARTITION BY country ORDER BY year) as prev_life_expec
+FROM life_expect)
+SELECT country FROM abc 
+GROUP BY country
+HAVING SUM(
+CASE 
+   WHEN life_expectancy<=prev_life_expec THEN 1
+   ELSE 0
+END ) =0
+ORDER BY country;
+
+-- Q2]  Which countries have stagnated GDP?
+
+WITH growth AS (
+SELECT
+    country,
+    MAX(CASE WHEN year = 2000 THEN GDP END) AS gdp_2000,
+    MAX(CASE WHEN year = 2015 THEN GDP END) AS gdp_2015
+FROM life_expect
+GROUP BY country
+)
+
+SELECT
+    country,
+    gdp_2000,
+    gdp_2015,
+    ((gdp_2015 - gdp_2000) / gdp_2000) * 100 AS growth_percent
+FROM growth
+ORDER BY growth_percent;
+
+
+-- Q3]  How does the life expectancy trend change over time within each country? (WE will find the difference between the prev value and the current value)
+
+WITH life_trend as(WITH abc as (SELECT country,
+year,
+life_expectancy,
+LAG(life_expectancy) OVER(PARTITION BY country ORDER BY year ) as prev_life 
+FROM life_expect)
+
+SELECT *,
+CASE 
+ WHEN prev_life>life_expectancy THEN 0
+ ELSE 1
+END as life_diff
+FROM abc)
+
+SELECT country,year,life_expectancy,prev_life FROM life_trend
+WHERE life_diff=0;
+
+-- Q4] Which countries have the highest “health efficiency” — that is, the highest life expectancy per unit of GDP
+
+WITH abc as (SELECT country,life_expectancy,gdp,
+life_expectancy/gdp as health_efficiency FROM life_expect)
+SELECT country,AVG(health_efficiency) AS avg_health FROM abc 
+GROUP BY country
+ORDER BY avg_health DESC LIMIT 10;
+
+-- Sub question of Q4] which countries have the higher health_efficiency ,when their avg gdp is lower than the average gpd
+
+SELECT country,AVG(gdp) as avg_gdp,AVG(life_expectancy)/AVG(gdp)*100 as health_efficiency FROM life_expect
+GROUP BY country
+HAVING avg_gdp<(SELECT AVG(gdp) FROM life_expect)
+ORDER BY health_efficiency DESC;
+
+SELECT country,AVG(gdp) as avg_gdp,AVG(life_expectancy)/AVG(gdp) as health_efficiency FROM life_expect
+GROUP BY country
+HAVING avg_gdp>(SELECT AVG(gdp) FROM life_expect)
+ORDER BY health_efficiency DESC;
+
+-- Q5] Which countries show the highest fluctuation in adult mortality rates over time?
+--      Adult_mortality = death of citizens between 15-60 very 1,000 person
+--      prev_year_mortality - adult_mortality '-' indicates decline and '+' indicates more death 
+
+
+SELECT country,year,adult_mortality,
+LAG(adult_mortality) OVER(PARTITION BY country ORDER BY year) as prev_year_mortality ,
+adult_mortality - LAG(adult_mortality) OVER(PARTITION BY country ORDER BY year) as diff_prev_year_mortality 
+FROM life_expect
+ORDER BY country,year;
+
+-- will find the difference between 2000 and 2015's adult_mortality rate  :: here the - indicates rise in adult mortality and + indicates decline in mortality
+-- -- finding countries with the highest fluctuation
+
+WITH adult_mortality_difference as(SELECT a.country,
+a.adult_mortality as mortality_2000,
+b.adult_mortality as mortality_2015,
+a.adult_mortality-b.adult_mortality as mortality_diff
+FROM life_expect AS a
+INNER JOIN life_expect AS b
+ON a.country=b.country
+WHERE a.year=2000 AND b.year=2015
+ORDER BY a.country)
+SELECT country,mortality_diff FROM adult_mortality_difference
+ORDER BY mortality_diff ;
+
+-- Q6]  Is there a correlation between schooling levels and adult mortality rates?
+
+SELECT country,
+    (AVG(adult_mortality* schooling) - AVG(adult_mortality) * AVG(schooling)) 
+    / (STDDEV(adult_mortality) * STDDEV(schooling)) AS correlation
+FROM life_expect
+GROUP BY country ;
+
+-- Q7]
+
+WITH polio_change AS (
+    SELECT 
+        a.country,
+        a.polio AS polio_2000,
+        b.polio AS polio_2015,
+        (b.polio - a.polio) AS polio_diff
+    FROM life_expect a
+    INNER JOIN life_expect b 
+        ON a.country = b.country
+    WHERE a.year = 2000 AND b.year = 2015
+)
+SELECT country, polio_2000, polio_2015, polio_diff
+FROM polio_change
+ORDER BY polio_diff DESC;
